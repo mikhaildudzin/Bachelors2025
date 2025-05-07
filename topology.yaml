@@ -1,18 +1,17 @@
-links:
-  - dst_port: 1
-    dst_switch: SW2
-    src_port: 1
-    src_switch: SW1
-  - dst_port: 2
-    dst_switch: SW3
-    src_port: 2
-    src_switch: SW2
-  - dst_port: 3
-    dst_switch: SW4
-    src_port: 3
-    src_switch: SW3
-  - dst_port: 4
-    dst_switch: SW5
-    src_port: 4
-    src_switch: SW4
+# Example Switch Topology in YAML
 
+topology:
+  name: MyNetworkTopology
+  description: A simple network topology with three switches connected in a triangle.
+
+switches:
+  - name: SW1
+    model: Cisco Catalyst 9300
+  - name: SW2
+    model: Juniper EX2300
+
+links:
+  - source: SW1
+    source_port: 8
+    destination: SW2
+    destination_port: 8

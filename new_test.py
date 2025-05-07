@@ -1,90 +1,65 @@
+import os
 import yaml
 import networkx as nx
 import matplotlib.pyplot as plt
-import os
-from io import StringIO
-
-# Load switch data from files in a directory
-def load_switch_data_from_dir(directory):
-    switch_data = {}
-    for filename in os.listdir(directory):
-        if filename.startswith("SW") and filename.endswith(".txt"):
-            file_path = os.path.join(directory, filename)
-            with open(file_path, 'r') as file:
-                data = file.read()
-            switch_name = data.split('\n')[0].split(':')[1].strip().split(' ')[0]
-            mac_table = {}
-            for line in data.split('\n')[1:]:
-                if line.strip():
-                    mac, port_vlan = line.split('(')
-                    mac = mac.strip()
-                    port = int(port_vlan.split('port:')[1].split(')')[0])
-                    mac_table[mac] = port
-            switch_data[switch_name] = mac_table
-    return switch_data
+from collections import defaultdict
 
 # Load topology data
-def load_topology_data(file_path):
-    with open(file_path, 'r') as file:
-        topology = yaml.safe_load(file)
-    return topology['links']
+with open('topology.yaml', 'r') as file:
+    topology = yaml.safe_load(file)
 
-# Directory containing switch files
-switch_data_dir = 'mac_results'  # Current directory, change as needed
-switch_data = load_switch_data_from_dir(switch_data_dir)
-topology = load_topology_data('topology.yaml')
+switch_connections = {}
+for link in topology['links']:
+    switch_connections[(link['source'], link['source_port'])] = (link['destination'], link['destination_port'])
+    switch_connections[(link['destination'], link['destination_port'])] = (link['source'], link['source_port'])
 
-# Create the graph
+# Parse MAC tables from files
+mac_tables = defaultdict(list)
+for filename in os.listdir():
+    if filename.endswith('.txt') and filename != 'topology.yml':
+        switch_name = filename.replace('.txt', '')
+        with open(filename, 'r') as f:
+            for line in f:
+                if '(port:' in line:
+                    parts = line.strip().split()
+                    mac_address = parts[0]
+                    port = parts[2].strip(')')
+                    vlan = parts[4]
+                    mac_tables[mac_address].append((switch_name, port, vlan))
+
+# Resolve primary switch for each MAC address
+device_location = {}
+for mac, locations in mac_tables.items():
+    for switch_name, port, vlan in locations:
+        if (switch_name, port) in switch_connections:
+            other_switch, _ = switch_connections[(switch_name, port)]
+            if mac in mac_tables and any(l[0] == other_switch for l in mac_tables[mac]):
+                continue
+        if mac not in device_location:
+            device_location[mac] = (switch_name, port, vlan)
+
+# Visualize using NetworkX
 G = nx.Graph()
 
-# Add switches as nodes
-for switch_name in switch_data.keys():
-    G.add_node(switch_name, type='switch')
+for switch in topology['switches']:
+    G.add_node(switch['name'], type='switch')
 
-# Helper function to check if a MAC is an end device
-def is_end_device(mac, switch_tables, topology):
-    connected_ports = []
-    for switch, table in switch_tables.items():
-        if mac in table:
-            port = table[mac]
-            connected_ports.append((switch, port))
+for (src, src_port), (dst, dst_port) in switch_connections.items():
+    G.add_edge(src, dst, label=f'{src_port} <-> {dst_port}')
 
-    if len(connected_ports) > 1:  # Check if MAC appears on multiple switches
-        return False
-    if len(connected_ports) == 0:
-        return False
-    return True
-
-# Add links between switches
-for link in topology:
-    src_switch = link['src_switch']
-    dst_switch = link['dst_switch']
-    if src_switch in G.nodes and dst_switch in G.nodes:
-        G.add_edge(src_switch, dst_switch)
-
-# Add end devices
-end_devices = {}
-for switch, table in switch_data.items():
-    for mac, port in table.items():
-        if is_end_device(mac, switch_data, topology):
-            G.add_node(mac, type='host')
-            G.add_edge(switch, mac)
-            end_devices[mac] = switch
-
-# Visualization
-pos = nx.spring_layout(G, k=0.8)
-
-# Node colors based on type
-node_colors = [
-    'skyblue' if G.nodes[node]['type'] == 'switch' else 'lightgreen'
-    for node in G.nodes
-]
-
-# Draw nodes
-nx.draw(G, pos, with_labels=True, node_color=node_colors, node_size=2000, font_size=10, font_weight='bold')
-
-# Draw edges
-nx.draw_networkx_edges(G, pos, edge_color='gray')
-
-plt.title("Network Topology with End Devices")
+for mac, (switch, port, vlan) in device_location.items():
+    G.add_node(mac, type='device')
+    G.add_edge(switch, mac, label=f'Port {port} (VLAN {vlan})')
+# Ensure all nodes have a 'type' attribute
+for n in G.nodes():
+    if 'type' not in G.nodes[n]:
+        G.nodes[n]['type'] = 'unknown'
+print("Nodes in the graph:", G.nodes(data=True))
+# Draw the network
+pos = nx.spring_layout(G)
+plt.figure(figsize=(10, 8))
+nx.draw(G, pos, with_labels=True, node_color=['lightblue' if G.nodes[n]['type'] == 'switch' else 'lightgreen' for n in G.nodes()])
+edge_labels = nx.get_edge_attributes(G, 'label')
+nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels)
+plt.title('Network Topology with MAC Addresses')
 plt.show()
