@@ -3,7 +3,7 @@ import yaml
 import networkx as nx
 import matplotlib.pyplot as plt
 from collections import defaultdict
-import matplotlib.cm as cm
+import matplotlib.colors as mcolors
 
 # ==============================
 # STEP 1: Load Topology Data
@@ -39,7 +39,6 @@ for filename in os.listdir():
 device_location = {}
 for mac, locations in mac_tables.items():
     for switch_name, port, vlan in locations:
-        # If connected to another switch, skip propagation entry
         if (switch_name, port) in switch_connections:
             other_switch, _ = switch_connections[(switch_name, port)]
             if mac in mac_tables and any(l[0] == other_switch for l in mac_tables[mac]):
@@ -58,12 +57,14 @@ for switch in topology['switches']:
 
 # Add links between switches
 for (src, src_port), (dst, dst_port) in switch_connections.items():
-    G.add_edge(src, dst, label=f'{src_port} <-> {dst_port}')
+    G.add_edge(src, dst, label=f'{src_port} <-> {dst_port}', color='gray')
 
 # Add device nodes and edges to their primary switch
+color_keys = list(mcolors.CSS4_COLORS.keys())
 for mac, (switch, port, vlan) in device_location.items():
     G.add_node(mac, type='device')
-    G.add_edge(switch, mac, label=f'Port {port} (VLAN {vlan})')
+    color = mcolors.CSS4_COLORS[color_keys[(int(vlan) * 7) % len(color_keys)]]
+    G.add_edge(switch, mac, label=f'Port {port} (VLAN {vlan})', color=color)
 
 # Ensure all nodes have a 'type' attribute
 for n in G.nodes():
@@ -75,7 +76,7 @@ for n in G.nodes():
 # ==============================
 # Generate unique colors for each VLAN
 vlans = {vlan for _, (_, _, vlan) in device_location.items()}
-vlan_colors = {vlan: cm.get_cmap('tab20')(i / len(vlans)) for i, vlan in enumerate(vlans)}
+vlan_colors = {vlan: mcolors.CSS4_COLORS[color_keys[(int(vlan) * 7) % len(color_keys)]] for vlan in vlans}
 
 # Define colors for each node
 node_colors = []
@@ -91,7 +92,8 @@ for n in G.nodes():
 # Draw the network
 pos = nx.spring_layout(G)
 plt.figure(figsize=(10, 8))
-nx.draw(G, pos, with_labels=True, node_color=node_colors, edge_color='gray', node_size=500)
+edge_colors = [G[u][v]['color'] for u, v in G.edges()]
+nx.draw(G, pos, with_labels=True, node_color=node_colors, edge_color=edge_colors, node_size=500)
 edge_labels = nx.get_edge_attributes(G, 'label')
 nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels)
 
