@@ -5,6 +5,8 @@ import networkx as nx
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 
+from matplotlib.patches import RegularPolygon
+import numpy as np
 def parse_mac_tables(mac_table_dir):
     """
     Parses MAC address tables from files in a directory.
@@ -96,18 +98,18 @@ def build_graph(topology, mac_tables):
 
     # Detect VLAN leakage (this part remains largely the same)
     mac_vlan_map = {}
-    for node, attrs in graph.nodes(data=True):
+    '''for node, attrs in graph.nodes(data=True):
         if attrs.get("type") == "device":
             mac = attrs["mac_address"]
             vlan = attrs["vlan"]
             if mac not in mac_vlan_map:
                 mac_vlan_map[mac] = set()
-            mac_vlan_map[mac].add(vlan)
+            mac_vlan_map[mac].add(vlan)'''
 
-    leaky_macs = {mac: vlans for mac, vlans in mac_vlan_map.items() if len(vlans) > 1}
-    for node, attrs in graph.nodes(data=True):
-        if attrs.get("type") == "device" and attrs["mac_address"] in leaky_macs:
-            attrs["leaky_vlans"] = leaky_macs[attrs["mac_address"]]
+    #leaky_macs = {mac: vlans for mac, vlans in mac_vlan_map.items() if len(vlans) > 1}
+    #for node, attrs in graph.nodes(data=True):
+    #    if attrs.get("type") == "device" and attrs["mac_address"] in leaky_macs:
+    #        attrs["leaky_vlans"] = leaky_macs[attrs["mac_address"]]
 
     return graph, vlan_colors
 
@@ -117,23 +119,36 @@ def visualize_network(graph, vlan_colors):
     node_colors = []
     node_sizes = []
     node_borders = []
+    node_patterns = []  # To store patterns for leaky nodes
+
     for node, attrs in graph.nodes(data=True):
         if attrs.get("type") == "switch":
             node_colors.append("lightblue")
             node_sizes.append(800)
             node_borders.append("black")
+            node_patterns.append(None)
         elif attrs.get("type") == "device":
             vlan = attrs["vlan"]
-            node_colors.append(vlan_colors.get(vlan, "gray"))
-            node_sizes.append(400)
             if "leaky_vlans" in attrs:
+                leaky_vlans = list(attrs["leaky_vlans"])
+                colors_to_pattern = [vlan_colors.get(v, "gray") for v in leaky_vlans]
+                # Create a striped pattern
+                num_stripes = len(colors_to_pattern)
+                pattern = [colors_to_pattern[i % num_stripes] for i in range(4)] # Repeat colors for pattern
+                node_colors.append(pattern)
+                node_patterns.append("///") # Use a hatch pattern
+                node_sizes.append(600) # Slightly larger for visibility
                 node_borders.append("red")
             else:
+                node_colors.append(vlan_colors.get(vlan, "gray"))
+                node_sizes.append(400)
                 node_borders.append("black")
+                node_patterns.append(None)
         else:
             node_colors.append("gray")
             node_sizes.append(200)
             node_borders.append("black")
+            node_patterns.append(None)
 
     nx.draw(graph, pos,
             with_labels=True,
@@ -141,7 +156,8 @@ def visualize_network(graph, vlan_colors):
             node_size=node_sizes,
             edgecolors=node_borders,
             linewidths=2,
-            font_size=8)
+            font_size=8,
+            style=node_patterns) # Apply patterns
 
     edge_labels = {}
     for u, v, data in graph.edges(data=True):
@@ -153,8 +169,14 @@ def visualize_network(graph, vlan_colors):
         edge_labels[(u, v)] = label
     nx.draw_networkx_edge_labels(graph, pos, edge_labels=edge_labels, font_size=6)
 
+    # Draw 'X' mark on leaky nodes
     for node, (x, y) in pos.items():
         attrs = graph.nodes[node]
+        if attrs.get("type") == "device" and "leaky_vlans" in attrs:
+            size = node_sizes[list(graph.nodes()).index(node)] * 0.0015 # Adjust size as needed
+            plt.plot([x - size, x + size], [y - size, y + size], color='red', linewidth=1.5)
+            plt.plot([x + size, x - size], [y - size, y + size], color='red', linewidth=1.5)
+
         if attrs.get("type") == "device":
             tooltip = f"MAC: {attrs['mac_address']}\nVLAN: {attrs['vlan']}"
             if "leaky_vlans" in attrs:
@@ -165,6 +187,7 @@ def visualize_network(graph, vlan_colors):
 
     plt.title("Network Topology Visualization")
     plt.show()
+
 
 if __name__ == "__main__":
     topology_file = "topology.yaml"
