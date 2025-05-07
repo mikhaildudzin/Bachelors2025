@@ -46,38 +46,55 @@ def load_topology(topology_file):
 def build_graph(topology, mac_tables):
     graph = nx.Graph()
 
+    # Add switches and inter-switch links
+    inter_switch_ports = {}  # Store inter-switch ports for each switch
     for link in topology["links"]:
         src_switch = link["src_switch"]
         dst_switch = link["dst_switch"]
+        src_port = link["src_port"]
+        dst_port = link["dst_port"]
+
         if src_switch not in graph:
             graph.add_node(src_switch, type="switch")
+            inter_switch_ports[src_switch] = set()
         if dst_switch not in graph:
             graph.add_node(dst_switch, type="switch")
+            inter_switch_ports[dst_switch] = set()
+
         graph.add_edge(src_switch, dst_switch,
-                      src_port=link["src_port"], dst_port=link["dst_port"])
+                      src_port=src_port, dst_port=dst_port)
+        inter_switch_ports[src_switch].add(src_port)
+        inter_switch_ports[dst_switch].add(dst_port)
 
     vlan_colors = {}
     next_color_index = 0
     colors = list(mcolors.TABLEAU_COLORS.values())
 
+    # Add end devices from MAC tables, filtering based on inter-switch ports
     for switch, entries in mac_tables.items():
         for entry in entries:
             mac_address = entry["mac_address"]
             vlan = entry["vlan"]
             port = entry["port"]
 
+            # Skip if the port matches an inter-switch link port on this switch
+            if switch in inter_switch_ports and port in inter_switch_ports[switch]:
+                continue
+
             device_name = f"Device-{mac_address[-4:]}"
-            graph.add_node(device_name,
-                           type="device",
-                           mac_address=mac_address,
-                           vlan=vlan)
+            if device_name not in graph:
+                graph.add_node(device_name,
+                               type="device",
+                               mac_address=mac_address,
+                               vlan=vlan)
+                if vlan not in vlan_colors:
+                    vlan_colors[vlan] = colors[next_color_index % len(colors)]
+                    next_color_index += 1
+            # Add edge only if the device node exists (to handle cases where the MAC is seen on multiple non-interlink ports)
+            if device_name in graph and not graph.has_edge(switch, device_name):
+                graph.add_edge(switch, device_name, port=port)
 
-            graph.add_edge(switch, device_name, port=port)
-
-            if vlan not in vlan_colors:
-                vlan_colors[vlan] = colors[next_color_index % len(colors)]
-                next_color_index += 1
-
+    # Detect VLAN leakage (this part remains largely the same)
     mac_vlan_map = {}
     for node, attrs in graph.nodes(data=True):
         if attrs.get("type") == "device":
