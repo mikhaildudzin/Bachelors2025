@@ -16,7 +16,7 @@ switch_connections = {}
 for link in topology['links']:
     switch_connections[(link['source'], link['source_port'])] = (link['destination'], link['destination_port'])
     switch_connections[(link['destination'], link['destination_port'])] = (link['source'], link['source_port'])
-
+print("switch_connections", switch_connections)
 # ==============================
 # STEP 2: Parse MAC Tables
 # ==============================
@@ -31,29 +31,59 @@ for filename in os.listdir():
                     mac_address = parts[0]
                     port = parts[2].strip(')')
                     vlan = parts[4]
+                    # Append all occurrences of the MAC address properly
                     mac_tables[mac_address].append((switch_name, port, vlan))
 
 # ==============================
-# STEP 3: Resolve Primary Switch for Each MAC
+# STEP 3: Detect VLAN Leaks and Remove Non-Access Ports
 # ==============================
-device_location = {}
+leaking_switches = []
+device_locations = defaultdict(list)  # Now this holds a list of all locations
+print("mac_tables", mac_tables.items())
 for mac, locations in mac_tables.items():
-    for switch_name, port, vlan in locations:
+    print("locations", locations)
+    print("mac", mac)
+    new_locations = []
+    # Check if every VLAN is consistent across all locations
+    if len(locations) > 1:
+        all_same_vlan = all(loc[2] == locations[0][2] for loc in locations)
+        if all_same_vlan:
+            print(f"All the same: {locations[0][2]}")
+        else:
+            #print("VLANs are not the same across locations")
+            for switch_name, port, vlan in locations:
+                # Check if the switch-port pair is in switch_connections
+                #print(f"Checking switch-port pair ({switch_name}, {port})") 
+                if (switch_name, int(port)) in switch_connections:
+                    #print(f"Switch-port pair ({switch_name}, {port}) is present in switch_connections")
+                    leaking_switches.append(switch_name)
+                else:
+                    new_locations.append((switch_name, port, vlan))        
+                    #print(f"Switch-port pair ({switch_name}, {port}) is NOT present in switch_connections")
+    else:
+        new_locations.append(locations[0][0],locations[0][1],locations[0][2])         
+    # Now we check each location, and remove non-access ports (those leading to other switches)
+    device_locations[mac] = new_locations
+'''    for switch_name, port, vlan in locations:
         if (switch_name, port) in switch_connections:
-            other_switch, _ = switch_connections[(switch_name, port)]
-            if mac in mac_tables and any(l[0] == other_switch for l in mac_tables[mac]):
+            # Port leading to another switch (trunk port) -> Remove it
+            if switch_name not in leaking_switches:  # Only mark switch as leaking if it has more than 1 VLAN
                 continue
-        if mac not in device_location:
-            device_location[mac] = (switch_name, port, vlan)
+        new_locations.append((switch_name, port, vlan))'''
 
+    # Store only filtered locations
+
+print("device_locations", device_locations)
+print("leaking_switches", leaking_switches)
 # ==============================
 # STEP 4: Build Graph Topology
 # ==============================
 G = nx.Graph()
 
-# Add switch nodes
+# Add switch nodes, mark them as red if they are leaking VLANs
 for switch in topology['switches']:
-    G.add_node(switch['name'], type='switch')
+    color = 'red' if switch['name'] in leaking_switches else 'lightblue'
+    G.add_node(switch['name'], type='switch', color=color)
 
 # Add links between switches
 for (src, src_port), (dst, dst_port) in switch_connections.items():
@@ -61,33 +91,24 @@ for (src, src_port), (dst, dst_port) in switch_connections.items():
 
 # Add device nodes and edges to their primary switch
 color_keys = list(mcolors.CSS4_COLORS.keys())
-for mac, (switch, port, vlan) in device_location.items():
-    G.add_node(mac, type='device')
-    color = mcolors.CSS4_COLORS[color_keys[(int(vlan) * 7) % len(color_keys)]]
-    G.add_edge(switch, mac, label=f'Port {port} (VLAN {vlan})', color=color)
-
-# Ensure all nodes have a 'type' attribute
-for n in G.nodes():
-    if 'type' not in G.nodes[n]:
-        G.nodes[n]['type'] = 'unknown'
+for mac, locations in device_locations.items():
+    print("locations", locations)
+    for switch, port, vlan in locations:
+        # If it's connected to a trunk port, skip visualization
+        if (switch, port) in switch_connections:  # If it's a trunk port, skip the device visualization
+            continue
+        G.add_node(mac, type='device')
+        color = mcolors.CSS4_COLORS[color_keys[(int(vlan) * 7) % len(color_keys)]]
+        G.add_edge(switch, mac, label=f'Port {port} (VLAN {vlan})', color=color)
 
 # ==============================
 # STEP 5: Visualize the Network
 # ==============================
-# Generate unique colors for each VLAN
-vlans = {vlan for _, (_, _, vlan) in device_location.items()}
+vlans = {vlan for locs in device_locations.values() for _, _, vlan in locs}
 vlan_colors = {vlan: mcolors.CSS4_COLORS[color_keys[(int(vlan) * 7) % len(color_keys)]] for vlan in vlans}
 
 # Define colors for each node
-node_colors = []
-for n in G.nodes():
-    if G.nodes[n]['type'] == 'switch':
-        node_colors.append('lightblue')
-    elif G.nodes[n]['type'] == 'device':
-        _, _, vlan = device_location.get(n, (None, None, None))
-        node_colors.append(vlan_colors.get(vlan, 'lightgreen'))
-    else:
-        node_colors.append('gray')
+node_colors = [G.nodes[n]['color'] if 'color' in G.nodes[n] else 'gray' for n in G.nodes()]
 
 # Draw the network
 pos = nx.spring_layout(G)
@@ -101,5 +122,5 @@ nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels)
 for vlan, color in vlan_colors.items():
     plt.scatter([], [], c=[color], label=f'VLAN {vlan}')
 plt.legend(loc='upper left', title='VLANs')
-plt.title('Network Topology with VLAN Coloring')
+plt.title('Network Topology with VLAN Leaking Detection')
 plt.show()
