@@ -37,33 +37,102 @@ for filename in os.listdir():
 # ==============================
 # STEP 3: Detect VLAN Leaks and Remove Non-Access Ports
 # ==============================
-leaking_switches = []
+leaking_switches = set()
 device_locations = defaultdict(list)  # Now this holds a list of all locations
 print("mac_tables", mac_tables.items())
-for mac, locations in mac_tables.items():
-    print("locations", locations)
-    print("mac", mac)
-    new_locations = []
-    # Check if every VLAN is consistent across all locations
-    if len(locations) > 1:
-        all_same_vlan = all(loc[2] == locations[0][2] for loc in locations)
+for mac, locations in list(mac_tables.items()): # Use list(mac_tables.items()) if you plan to modify mac_tables inside loop, though here we populate device_locations
+    print(f"\nProcessing MAC: {mac}, Original Locations: {locations}")
+    
+    processed_locations_for_mac = [] # To store locations that are deemed access ports for this MAC
+
+    if not locations: # Should not happen if mac_tables is built correctly
+        continue
+
+    if len(locations) == 1:
+        # If MAC is seen in only one location, assume it's an access port
+        print(f"  MAC {mac} seen in a single location. Treating as access port.")
+        processed_locations_for_mac = locations
+    else: # MAC seen in multiple locations
+        # Check if VLAN is consistent across all locations for this MAC
+        first_vlan = locations[0][2]
+        # Corrected 'all_same' check: iterate through each location's VLAN
+        all_same_vlan = all(loc[2] == first_vlan for loc in locations)
+
         if all_same_vlan:
-            print(f"All the same: {locations[0][2]}")
-        else:
-            #print("VLANs are not the same across locations")
-            for switch_name, port, vlan in locations:
-                # Check if the switch-port pair is in switch_connections
-                #print(f"Checking switch-port pair ({switch_name}, {port})") 
-                if (switch_name, int(port)) in switch_connections:
-                    #print(f"Switch-port pair ({switch_name}, {port}) is present in switch_connections")
-                    leaking_switches.append(switch_name)
+            print(f"  MAC {mac}: All locations have the same VLAN: {first_vlan}.")
+            # If VLANs are consistent, we still need to filter out inter-switch links.
+            # Any remaining locations are considered valid access ports.
+            temp_locations = []
+            for switch_name, port_str, vlan_val in locations:
+                try:
+                    port_int = int(port_str)
+                    connection_key = (switch_name, port_int)
+                except ValueError:
+                    # Port string cannot be converted to int, assume it's an access port
+                    # (e.g., "Port-channel1" or other non-numeric port names)
+                    print(f"    Port '{port_str}' on switch '{switch_name}' is not a simple integer. Assuming access port.")
+                    temp_locations.append((switch_name, port_str, vlan_val))
+                    continue
+                
+                if connection_key in switch_connections:
+                    print(f"    Switch-port pair {connection_key} (original port '{port_str}') is an inter-switch link. Ignoring for device location.")
+                    # Optionally, you might want to log this or handle it, but it's not a "leak" if VLANs are consistent.
                 else:
-                    new_locations.append((switch_name, port, vlan))        
-                    #print(f"Switch-port pair ({switch_name}, {port}) is NOT present in switch_connections")
-    else:
-        new_locations.append(locations[0][0],locations[0][1],locations[0][2])         
-    # Now we check each location, and remove non-access ports (those leading to other switches)
-    device_locations[mac] = new_locations
+                    print(f"    Switch-port pair {connection_key} (original port '{port_str}') is an access port.")
+                    temp_locations.append((switch_name, port_str, vlan_val))
+            processed_locations_for_mac = temp_locations
+        else: # VLANs are not the same across locations for this MAC
+            print(f"  MAC {mac}: VLANs are NOT the same across locations: {[loc[2] for loc in locations]}")
+            # This is a potential VLAN leak scenario.
+            # We filter out inter-switch links. Remaining ones are access ports.
+            # If a MAC with inconsistent VLANs appears on an inter-switch link, that switch is "leaking".
+            temp_locations = []
+            for switch_name, port_str, vlan_val in locations:
+                print(f"    Checking switch-port pair ({switch_name}, {port_str}) with VLAN {vlan_val}")
+                try:
+                    port_int = int(port_str) # Convert port from string to int for lookup
+                    connection_key = (switch_name, port_int)
+                except ValueError:
+                    # Port string cannot be converted to int, assume it's an access port
+                    print(f"      Port '{port_str}' on switch '{switch_name}' is not a simple integer. Assuming access port.")
+                    temp_locations.append((switch_name, port_str, vlan_val))
+                    print(f"      Added to potential device locations: ({switch_name}, {port_str}, {vlan_val})")
+                    continue
+
+                if connection_key in switch_connections:
+                    print(f"      Switch-port pair {connection_key} (original port '{port_str}') is an inter-switch link.")
+                    # This MAC on this inter-switch link with a differing VLAN indicates a leak on this switch.
+                    leaking_switches.add(switch_name) # Corrected: use add() for sets
+                    print(f"      Switch '{switch_name}' added to leaking_switches.")
+                else:
+                    # Not an inter-switch link, so it's an access port where the device is seen.
+                    temp_locations.append((switch_name, port_str, vlan_val))
+                    print(f"      Switch-port pair {connection_key} (original port '{port_str}') is NOT in switch_connections. Added to potential device locations.")
+            processed_locations_for_mac = temp_locations
+
+    if processed_locations_for_mac:
+        # After filtering, if there are multiple locations for the same MAC,
+        # you might need further logic to decide the "true" location.
+        # For now, we store all determined access port locations.
+        # Also, ensure VLAN consistency among these final chosen ports if that's a requirement.
+        final_vlans = set(loc[2] for loc in processed_locations_for_mac)
+        if len(final_vlans) > 1:
+            print(f"  WARNING for MAC {mac}: After filtering, device still appears on access ports with multiple VLANs: {final_vlans}. Locations: {processed_locations_for_mac}")
+            # Decide how to handle this: pick one, report error, or list all.
+            # For now, adding all to device_locations.
+        device_locations[mac].extend(processed_locations_for_mac)
+    elif not processed_locations_for_mac and locations: # Original locations existed, but all were filtered out
+         print(f"  MAC {mac}: All original locations were filtered out (e.g., all were inter-switch links). No device location determined.")
+
+
+print("\n==============================")
+print("STEP 3 Results:")
+print("==============================")
+print("Leaking Switches:", leaking_switches)
+print("Device Locations (MAC: [(Switch, Port, VLAN), ...]):")
+for mac_addr, locs in device_locations.items():
+    print(f"  {mac_addr}: {locs}")
+
 '''    for switch_name, port, vlan in locations:
         if (switch_name, port) in switch_connections:
             # Port leading to another switch (trunk port) -> Remove it
@@ -72,9 +141,6 @@ for mac, locations in mac_tables.items():
         new_locations.append((switch_name, port, vlan))'''
 
     # Store only filtered locations
-
-print("device_locations", device_locations)
-print("leaking_switches", leaking_switches)
 # ==============================
 # STEP 4: Build Graph Topology
 # ==============================
