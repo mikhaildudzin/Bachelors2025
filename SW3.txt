@@ -1,0 +1,4 @@
+Switch: SW3 (192.168.1.3)
+00:11:22:33:44:55 (port: 2) VLAN: 40
+00:cc:dd:ee:ff:01 (port: 5) VLAN: 50
+00:0a:95:11:22:36 (port: 6) VLAN: 10

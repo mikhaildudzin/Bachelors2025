@@ -1,0 +1,5 @@
+Switch: SW4 (192.168.1.4)
+00:cc:dd:ee:ff:01 (port: 3) VLAN: 50
+00:dd:ee:ff:aa:01 (port: 7) VLAN: 60
+00:0a:95:11:22:37 (port: 8) VLAN: 10
+
