@@ -1,203 +1,201 @@
 import yaml
+import os
 import re
 import networkx as nx
 import matplotlib.pyplot as plt
-from collections import defaultdict
+import matplotlib.colors as mcolors
 
-def parse_mac_table(file_content):
+def parse_mac_tables(mac_table_dir):
     """
-    Parses the MAC address table from a switch's configuration.
+    Parses MAC address tables from files in a directory.
 
     Args:
-        file_content (str): The content of the file.
+        mac_table_dir (str): Path to the directory containing MAC table files.
 
     Returns:
-        dict: A dictionary where keys are MAC addresses and values are dictionaries
-              containing 'port' and 'vlan' information.
+        dict: A dictionary where keys are switch names and values are lists of
+              dictionaries, each containing 'mac_address', 'vlan', and 'port'.
     """
-    mac_table = {}
-    try:
-        lines = file_content.strip().split('\n')
-        # Skip the first line, which is the switch name
-        for line in lines[1:]:
-            match = re.match(r"([0-9a-fA-F:]+)\s*\(port:\s*(\d+)\)\s*VLAN:\s*(\d+)", line)
-            if match:
-                mac, port, vlan = match.groups()
-                mac_table[mac] = {'port': int(port), 'vlan': int(vlan)}
-            else:
-                print(f"Warning: Skipping invalid line: {line}")
-    except Exception as e:
-        print(f"Error parsing MAC table: {e}")
-        return {}
 
-    return mac_table
+    mac_tables = {}
+    for filename in os.listdir(mac_table_dir):
+        if filename.startswith("SW") and filename.endswith(".txt"):
+            print(f"Parsing MAC table from {filename}")
+            switch_name = filename[:-4]  # Remove ".txt"
+            mac_tables[switch_name] = []
+            with open(os.path.join(mac_table_dir, filename), "r") as f:
+                for line in f:
+                    match = re.search(r"([0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2})\s+\(port:\s+(\d+)\)\s+VLAN:\s+(\d+)", line)
+                    print(match)
+                    if match:
+                        mac_address = match.group(1)
+                        vlan = int(match.group(2))
+                        port = int(match.group(3))
+                        mac_tables[switch_name].append({
+                            "mac_address": mac_address,
+                            "vlan": vlan,
+                            "port": port,
+                        })
+    
+    return mac_tables
 
-def parse_topology(topology_yaml):
+
+def load_topology(topology_file):
     """
-    Parses the network topology from the YAML file.
+    Loads the network topology from a YAML file.
 
     Args:
-        topology_yaml (str): The content of the topology YAML file.
+        topology_file (str): Path to the YAML file containing the topology.
 
     Returns:
-        list: A list of dictionaries, where each dictionary represents a link
-              between two switches.
+        dict: A dictionary representing the network topology.
     """
-    try:
-        topology_data = yaml.safe_load(topology_yaml)
-        if not topology_data or 'links' not in topology_data:
-            print("Warning: Topology data is empty or missing 'links' key.")
-            return []
-        return topology_data['links']
-    except yaml.YAMLError as e:
-        print(f"Error parsing topology YAML: {e}")
-        return []
 
-def build_network_graph(topology, switch_mac_tables):
+    with open(topology_file, "r") as f:
+        topology = yaml.safe_load(f)
+    return topology
+
+
+def build_graph(topology, mac_tables):
     """
-    Builds a network graph from the topology and MAC address tables using NetworkX.
+    Builds a NetworkX graph from the topology and MAC address tables.
 
     Args:
-        topology (list): A list of dictionaries representing network links.
-        switch_mac_tables (dict): A dictionary of switch MAC address tables.
+        topology (dict): The network topology dictionary.
+        mac_tables (dict): The MAC address tables dictionary.
 
     Returns:
-        nx.Graph: A NetworkX graph representing the network topology.
+        networkx.Graph: The NetworkX graph representing the network.
     """
+
     graph = nx.Graph()
 
-    for link in topology:
-        src_switch = link['src_switch']
-        dst_switch = link['dst_switch']
-        src_port = link['src_port']
-        dst_port = link['dst_port']
+    # Add switch nodes
+    for link in topology["links"]:
+        src_switch = link["src_switch"]
+        dst_switch = link["dst_switch"]
+        if src_switch not in graph:
+            graph.add_node(src_switch, type="switch")
+        if dst_switch not in graph:
+            graph.add_node(dst_switch, type="switch")
         graph.add_edge(src_switch, dst_switch,
-                      src_port=src_port, dst_port=dst_port, type='switch')  # Store port info
+                      src_port=link["src_port"], dst_port=link["dst_port"])
 
     # Add end devices from MAC tables
-    for switch_name, mac_table_data in switch_mac_tables.items():
-        if mac_table_data is None:
-            continue
-        for mac, mac_info in mac_table_data.items():
-            device_name = mac  # Use MAC address as node name
-            graph.add_node(device_name, type='end_device', mac=mac, vlan=mac_info['vlan'])
-            graph.add_edge(switch_name, device_name, port=mac_info['port'], type='end_device')
+    vlan_colors = {}
+    next_color_index = 0
+    colors = list(mcolors.TABLEAU_COLORS.values())  # Use Tableau Colors for distinctiveness
 
-    return graph
+    for switch, entries in mac_tables.items():
+        for entry in entries:
+            mac_address = entry["mac_address"]
+            vlan = entry["vlan"]
+            port = entry["port"]
+
+            device_name = f"Device-{mac_address[-4:]}"  # Use last 4 digits for name
+
+            graph.add_node(device_name,
+                           type="device",
+                           mac_address=mac_address,
+                           vlan=vlan)
+
+            graph.add_edge(switch, device_name, port=port)
+
+            # Assign colors based on VLAN
+            if vlan not in vlan_colors:
+                vlan_colors[vlan] = colors[next_color_index % len(colors)]
+                next_color_index += 1
+
+    # Detect VLAN leakage
+    mac_vlan_map = {}
+    for node, attrs in graph.nodes(data=True):
+        if attrs.get("type") == "device":
+            mac = attrs["mac_address"]
+            vlan = attrs["vlan"]
+            if mac not in mac_vlan_map:
+                mac_vlan_map[mac] = set()
+            mac_vlan_map[mac].add(vlan)
+
+    leaky_macs = {mac: vlans for mac, vlans in mac_vlan_map.items() if len(vlans) > 1}
+    for node, attrs in graph.nodes(data=True):
+        if attrs.get("type") == "device" and attrs["mac_address"] in leaky_macs:
+            attrs["leaky_vlans"] = leaky_macs[attrs["mac_address"]]
+
+    return graph, vlan_colors
 
 
-def detect_vlan_leaks(graph):
+def visualize_network(graph, vlan_colors):
     """
-    Detects VLAN leaks in the network graph.
+    Visualizes the network graph.
 
     Args:
-        graph (nx.Graph): A NetworkX graph representing the network topology.
-
-    Returns:
-        dict: A dictionary where keys are MAC addresses and values are lists of
-              VLANs the MAC address is seen in.
+        graph (networkx.Graph): The network graph.
+        vlan_colors (dict):  Mapping of VLANs to colors.
     """
-    vlan_map = defaultdict(set)
-    leaks = {}
-    for node in graph.nodes():
-        if graph.nodes[node].get('type') == 'end_device':
-            mac = graph.nodes[node]['mac']
-            vlan = graph.nodes[node]['vlan']
-            vlan_map[mac].add(vlan)
 
-    for mac, vlan_set in vlan_map.items():
-        if len(vlan_set) > 1:
-            leaks[mac] = list(vlan_set)
-    if not leaks:
-        print("No VLAN leaks detected.")
-    else:
-        print(f"VLAN leaks detected for MAC addresses: {', '.join(leaks.keys())}")
-    return leaks
+    pos = nx.spring_layout(graph, k=0.3, iterations=50)  # Adjust layout parameters as needed
 
-
-def visualize_network(graph, vlan_leaks):
-    """
-    Visualizes the network graph using NetworkX and Matplotlib.
-
-    Args:
-        graph (nx.Graph): A NetworkX graph representing the network topology.
-        vlan_leaks (dict): A dictionary of VLAN leaks.
-    """
-    # Node colors based on device type and VLAN leakage
+    # Node colors and sizes
     node_colors = []
-    for node in graph.nodes():
-        if graph.nodes[node].get('type') == 'switch':
-            node_colors.append('lightblue')  # Switch
-        elif graph.nodes[node].get('type') == 'end_device':
-            mac = graph.nodes[node]['mac']
-            if mac in vlan_leaks:
-                node_colors.append('lightcoral')  # VLAN leak
+    node_sizes = []
+    node_borders = []
+    for node, attrs in graph.nodes(data=True):
+        if attrs.get("type") == "switch":
+            node_colors.append("lightblue")
+            node_sizes.append(800)
+            node_borders.append("black")
+        elif attrs.get("type") == "device":
+            vlan = attrs["vlan"]
+            node_colors.append(vlan_colors.get(vlan, "gray"))  # Default to gray if VLAN not found
+            node_sizes.append(400)
+            if "leaky_vlans" in attrs:
+                node_borders.append("red")  # Red border for leaky devices
             else:
-                vlan = graph.nodes[node]['vlan']
-                # Simple VLAN color mapping (can be expanded)
-                vlan_colors = {10: 'lightgreen', 20: 'yellow', 30: 'orange', 40: 'pink', 50: 'cyan', 60: 'magenta', 70: 'gray'}
-                node_colors.append(vlan_colors.get(vlan, 'white'))  # Default to white
+                node_borders.append("black")
         else:
-            node_colors.append('white')  # Unknown
+            node_colors.append("gray")
+            node_sizes.append(200)
+            node_borders.append("black")
 
-    # Node labels (shortened MACs)
-    node_labels = {node: (node if graph.nodes[node].get('type') == 'switch' else node[:8]) for node in graph.nodes()}
+    nx.draw(graph, pos,
+            with_labels=True,
+            node_color=node_colors,
+            node_size=node_sizes,
+            edgecolors=node_borders,
+            linewidths=2,
+            font_size=8)
 
     # Edge labels (port numbers)
     edge_labels = {}
     for u, v, data in graph.edges(data=True):
-        if data.get('type') == 'switch':
-            edge_labels[(u, v)] = f"S:{data['src_port']}\nD:{data['dst_port']}"
-        elif data.get('type') == 'end_device':
-            edge_labels[(u, v)] = f"Port:{data['port']}"
-
-    # Layout
-    pos = nx.spring_layout(graph)  # You can try different layouts
-
-    # Draw nodes, labels, and edges
-    nx.draw_networkx_nodes(graph, pos, node_color=node_colors, node_size=300)
-    nx.draw_networkx_labels(graph, pos, labels=node_labels, font_size=8)
-    nx.draw_networkx_edges(graph, pos, edge_color='gray', width=1, arrowsize=10)
+        label = ""
+        if "src_port" in data and "dst_port" in data:
+            label = f"{data['src_port']}-{data['dst_port']}"
+        elif "port" in data:
+            label = str(data["port"])
+        edge_labels[(u, v)] = label
     nx.draw_networkx_edge_labels(graph, pos, edge_labels=edge_labels, font_size=6)
 
-    # Add title and show plot
-    plt.title("Network Topology with VLAN Leak Detection")
+    # Node tooltips (using matplotlib annotations - limited interactivity)
+    for node, (x, y) in pos.items():
+        attrs = graph.nodes[node]
+        if attrs.get("type") == "device":
+            tooltip = f"MAC: {attrs['mac_address']}\nVLAN: {attrs['vlan']}"
+            if "leaky_vlans" in attrs:
+                tooltip += f"\nLeakage: {attrs['leaky_vlans']}"
+            plt.annotate(tooltip, xy=(x, y), xytext=(x + 0.05, y + 0.05),
+                         bbox=dict(boxstyle="round,pad=0.3", fc="yellow", alpha=0.5),
+                         fontsize=6, ha="left", va="bottom")
+
+    plt.title("Network Topology Visualization")
     plt.show()
 
 
 if __name__ == "__main__":
-    # Load data from files
-    try:
-        with open("topology.yaml", "r") as f:
-            topology_data = f.read()
-    except FileNotFoundError:
-        print("Error: topology.yaml not found.")
-        exit(1)
+    topology_file = "topology.yaml"
+    mac_table_dir = "mac_results"  # Replace with your actual directory
 
-    # Load switch data
-    switch_files = {
-        "SW1": "SW1.txt",
-        "SW2": "SW2.txt",
-        "SW3": "SW3.txt",
-        "SW4": "SW4.txt",
-        "SW5": "SW5.txt",
-    }
-    switch_mac_tables = {}
-    for switch_name, filename in switch_files.items():
-        try:
-            with open(filename, "r") as f:
-                switch_mac_tables[switch_name] = parse_mac_table(f.read())
-        except FileNotFoundError:
-            print(f"Error: {filename} not found. Skipping {switch_name}.")
-            switch_mac_tables[switch_name] = None
-        except Exception as e:
-            print(f"Error reading {filename}: {e}")
-            switch_mac_tables[switch_name] = None
-
-    # Parse the data
-    topology = parse_topology(topology_data)
-    network_graph = build_network_graph(topology, switch_mac_tables)
-    vlan_leaks = detect_vlan_leaks(network_graph)
-
-    # Visualize the network
-    visualize_network(network_graph, vlan_leaks)
+    mac_tables = parse_mac_tables(mac_table_dir)
+    topology = load_topology(topology_file)
+    graph, vlan_colors = build_graph(topology, mac_tables)
+    visualize_network(graph, vlan_colors)
