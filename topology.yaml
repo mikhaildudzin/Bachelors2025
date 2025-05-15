@@ -1,14 +1,8 @@
 # Example Switch Topology in YAML
 
 topology:
-  name: MyNetworkTopology
-  description: A simple network topology with three switches connected in a triangle.
-
-switches:
-  - name: SW1
-    model: Cisco Catalyst 9300
-  - name: SW2
-    model: Juniper EX2300
+  name: Test Topology
+  description: A simple network topology with two switches connected
 
 links:
   - source: SW1

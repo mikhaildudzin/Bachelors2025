@@ -1,5 +1,0 @@
-Switch: SW1 (192.168.1.1)
-00:0a:95:11:22:33 (port: 1) VLAN: 10
-00:bb:cc:dd:ee:01 (port: 2) VLAN: 20
-00:0a:95:11:22:34 (port: 3) VLAN: 10
-00:ff:aa:bb:cc:11 (port: 9) VLAN: 30

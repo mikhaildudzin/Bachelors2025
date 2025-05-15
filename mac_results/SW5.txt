@@ -1,5 +1,0 @@
-00:dd:ee:ff:aa:01 (port: 4) VLAN: 60
-00:ee:ff:aa:bb:01 (port: 9) VLAN: 70
-00:0a:95:11:22:33 (port: 10) VLAN: 10  # Same MAC as SW1, different switch, different port
-00:ff:aa:bb:cc:11 (port: 13) VLAN: 30  # Leaky MAC - appears on multiple VLANs
-00:ff:aa:bb:cc:11 (port: 14) VLAN: 40  # Leaky MAC - appears on multiple VLANs
