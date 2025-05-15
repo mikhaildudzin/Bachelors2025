@@ -54,7 +54,7 @@ def load_topology(filename):
         except (KeyError, ValueError) as e:
             logging.warning(f"Skipping invalid link entry: {link}. Error: {e}. Ensure 'source', 'destination', 'source_port', 'destination_port' are present and ports are numeric.")
     
-    logging.info(f"Loaded switch connections: {switch_connections}")
+    #logging.info(f"Loaded switch connections: {switch_connections}")
     return topology_data, switch_connections
 
 def parse_mac_tables(directory, topology_filename):
@@ -150,7 +150,7 @@ def detect_vlan_leaks_and_identify_devices(mac_tables, switch_connections):
                         logging.debug(f"    Switch-port {connection_key} (orig port '{port_str}') is access port.")
                         temp_locations.append((switch_name, port_str, vlan_val))
             else: # VLANs are not the same across locations for this MAC
-                logging.debug(f"  MAC {mac}: VLANs are NOT same: {[loc[2] for loc in locations]}")
+                logging.info(f"  MAC {mac}: VLANs are NOT same: {[loc[2] for loc in locations]}")
                 # Potential VLAN leak. Filter inter-switch links; if MAC on such a link, switch is leaking.
                 for switch_name, port_str, vlan_val in locations:
                     logging.debug(f"    Checking switch-port ({switch_name}, {port_str}) with VLAN {vlan_val}")
@@ -196,27 +196,37 @@ def build_network_graph(topology_data, switch_connections, device_locations, lea
         if not switch_name:
             logging.warning(f"Skipping switch with no name: {switch}")
             continue
-        color = 'red' if switch_name in leaking_switches else 'skyblue' # Changed lightblue to skyblue for better contrast
+        color = 'red' if switch_name in leaking_switches else 'skyblue'
         G.add_node(switch_name, type='switch', color=color, label=switch_name)
 
     # Add links between switches (edges)
-    # Iterate through unique links to avoid duplicate edges if switch_connections is symmetrical
     added_edges = set()
     for (src, src_port), (dst, dst_port) in switch_connections.items():
-        # Ensure canonical representation of edge to add only once
         edge = tuple(sorted((src, dst)))
         if edge not in added_edges:
             G.add_edge(src, dst, label=f'P{src_port}<->P{dst_port}', color='gray')
             added_edges.add(edge)
 
-    # Add device nodes and edges to their connected switch
-    # Use a list of distinct colors for VLANs
-    distinct_colors = list(mcolors.TABLEAU_COLORS.values()) # Using Tableau colors for better distinction
+    # --- VLAN to color mapping ---
+    # Gather all VLANs used by devices
+    vlan_set = set()
+    for mac, locations in device_locations.items():
+        for _, _, vlan in locations:
+            vlan_set.add(vlan)
+    vlan_list = sorted(vlan_set, key=lambda x: int(x) if x.isdigit() else x)
+    # Use a large color palette
+    color_palette = list(mcolors.TABLEAU_COLORS.values()) + \
+                    list(mcolors.CSS4_COLORS.values()) + \
+                    list(mcolors.XKCD_COLORS.values())
+    # Remove duplicates and keep only as many as needed
+    color_palette = list(dict.fromkeys(color_palette))
+    vlan_to_color = {}
+    for idx, vlan in enumerate(vlan_list):
+        vlan_to_color[vlan] = color_palette[idx % len(color_palette)]
 
+    # Add device nodes and edges to their connected switch
     for mac, locations in device_locations.items():
         for switch_name, port_str, vlan in locations:
-            # Check if this device connection is on an inter-switch link port.
-            # Ports in switch_connections are integers.
             is_on_trunk = False
             try:
                 port_int = int(port_str)
@@ -224,22 +234,14 @@ def build_network_graph(topology_data, switch_connections, device_locations, lea
                     logging.debug(f"Device {mac} on ({switch_name}, port {port_str}, VLAN {vlan}) appears on an inter-switch link. Not adding separate device edge.")
                     is_on_trunk = True 
             except ValueError:
-                # Port_str is not an integer (e.g. "Port-channel1"), assume it's an access port.
-                pass # is_on_trunk remains False
+                pass
 
             if not is_on_trunk:
                 if not G.has_node(mac): # Add device node only once
-                     G.add_node(mac, type='device', label=f"{mac}\n(VLAN {vlan})") # Add VLAN to device label
-                
-                # Assign color based on VLAN
-                try:
-                    vlan_int_for_color = int(vlan)
-                    edge_color = distinct_colors[vlan_int_for_color % len(distinct_colors)]
-                except ValueError:
-                    edge_color = 'lightgrey' # Default color for non-integer VLANs
-                    logging.warning(f"VLAN '{vlan}' for MAC {mac} is not an integer. Using default color for edge.")
-
-                if G.has_node(switch_name): # Ensure switch node exists
+                    node_color = vlan_to_color.get(vlan, 'lightgrey')
+                    G.add_node(mac, type='device', label=f"{mac}\n(VLAN {vlan})", color=node_color)
+                edge_color = vlan_to_color.get(vlan, 'lightgrey')
+                if G.has_node(switch_name):
                     G.add_edge(switch_name, mac, label=f'P{port_str}\nVLAN {vlan}', color=edge_color)
                 else:
                     logging.warning(f"Switch '{switch_name}' for MAC {mac} not found in graph nodes. Skipping edge.")
@@ -253,30 +255,27 @@ def visualize_network(G, device_locations):
         logging.info("Graph is empty. Nothing to visualize.")
         return
 
-    plt.figure(figsize=(16, 12)) # Increased figure size
+    plt.figure(figsize=(16, 12))
 
-    # Prepare node colors and sizes
     node_colors = []
     node_sizes = []
     node_labels = {}
 
     for node, data in G.nodes(data=True):
-        node_labels[node] = data.get('label', node) # Use custom label if present
+        node_labels[node] = data.get('label', node)
         if data.get('type') == 'switch':
             node_colors.append(data.get('color', 'skyblue'))
             node_sizes.append(3000)
         elif data.get('type') == 'device':
-            node_colors.append('lightgreen') # Color for device nodes
+            node_colors.append(data.get('color', 'lightgreen'))  # Use assigned VLAN color
             node_sizes.append(1500)
         else:
-            node_colors.append('gray') # Default
+            node_colors.append('gray')
             node_sizes.append(1000)
 
-    # Prepare edge colors
     edge_colors = [G[u][v].get('color', 'gray') for u, v in G.edges()]
 
-    # Use a layout that tries to minimize edge crossing
-    pos = nx.kamada_kawai_layout(G) # Alternative: nx.spring_layout(G, k=0.5, iterations=50)
+    pos = nx.kamada_kawai_layout(G)
 
     nx.draw(G, pos, 
             labels=node_labels, 
@@ -284,37 +283,33 @@ def visualize_network(G, device_locations):
             node_color=node_colors, 
             node_size=node_sizes,
             edge_color=edge_colors, 
-            width=1.5, # Edge width
+            width=1.5,
             font_size=8,
             font_weight='bold')
 
     edge_labels = nx.get_edge_attributes(G, 'label')
     nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_size=7)
 
-    # Create legend for VLANs based on actual device connections
-    # Use colors from distinct_colors list
-    distinct_colors_list = list(mcolors.TABLEAU_COLORS.values())
+    # Legend for VLANs (devices)
+    # Build from device nodes in G
     vlan_legend_handles = []
-    seen_vlans_for_legend = set()
-
-    for mac, locs in device_locations.items():
-        for _, _, vlan_str in locs:
-            if vlan_str not in seen_vlans_for_legend:
-                try:
-                    vlan_int = int(vlan_str)
-                    color = distinct_colors_list[vlan_int % len(distinct_colors_list)]
-                    vlan_legend_handles.append(plt.Line2D([0], [0], marker='o', color='w', label=f'VLAN {vlan_str}',
-                                                          markerfacecolor=color, markersize=10))
-                    seen_vlans_for_legend.add(vlan_str)
-                except ValueError:
-                    pass # Skip non-integer VLANs for color legend
-
+    seen_vlans = set()
+    for node, data in G.nodes(data=True):
+        if data.get('type') == 'device':
+            label = data.get('label', '')
+            vlan = label.split('VLAN')[-1].strip(' )(') if 'VLAN' in label else None
+            color = data.get('color', 'lightgrey')
+            if vlan and vlan not in seen_vlans:
+                vlan_legend_handles.append(
+                    plt.Line2D([0], [0], marker='o', color='w', label=f'VLAN {vlan}',
+                               markerfacecolor=color, markersize=10)
+                )
+                seen_vlans.add(vlan)
     if vlan_legend_handles:
         plt.legend(handles=vlan_legend_handles, title="VLAN Colors (Devices)", loc="upper left", bbox_to_anchor=(1.05, 1))
-    
+
     plt.title('Network Topology with VLAN Leak Detection', size=16)
-    plt.axis('off') # Turn off axis
-    #plt.tight_layout() # Adjust layout to prevent labels from overlapping
+    plt.axis('off')
     plt.show()
 
 # ==============================
