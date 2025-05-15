@@ -48,7 +48,7 @@ for i in $(seq "$START_LAST_OCTET" "$END_LAST_OCTET"); do
     done
 done
 
-# Check for MACs appearing in multiple VLANs (possible leak)
+# Check for leaking
 echo "VLAN Leak Detection:" > "$OUTPUT_DIR/vlan_leaks.txt"
 for MAC in "${!mac_vlan_map[@]}"; do
     UNIQUE_VLANS=$(echo "${mac_vlan_map[$MAC]}" | tr ' ' '\n' | cut -d@ -f1 | sort -u | wc -l)
@@ -57,5 +57,5 @@ for MAC in "${!mac_vlan_map[@]}"; do
     fi
 done
 
-echo "✅ Scan complete. Results saved in $OUTPUT_DIR/"
+echo "Scan complete. Results saved in $OUTPUT_DIR/"
 
