@@ -1,0 +1,11 @@
+# Example Switch Topology in YAML
+
+topology:
+  name: Test Topology
+  description: A simple network topology with two switches connected
+
+links:
+  - source: SW1
+    source_port: 8
+    destination: SW2
+    destination_port: 8
