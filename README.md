@@ -1,5 +1,4 @@
 ## Project Overview
-
 This project aims to visualize VLAN trees within computer networks and detect VLAN leakage vulnerabilities. It includes two main components:
 
 1. `scan.sh`: A Bash script that performs SNMP-based scanning of network switches to collect MAC address tables and VLAN data.
@@ -8,7 +7,6 @@ This project aims to visualize VLAN trees within computer networks and detect VL
 The solution helps network administrators identify misconfigurations and visualize logical VLAN layouts for better network understanding and security.
 
 ## Prerequisites
-
 Before running the project, ensure you have the following installed:
 
 * **Bash Shell** (Linux/macOS)
@@ -27,14 +25,11 @@ pip install networkx matplotlib pyyaml
 ```
 
 ## Installation
-
 Clone the repository and navigate to the project directory:
-
 ```bash
 git clone <repository_url>
 cd <repository_folder>
 ```
-
 Make the Bash script executable:
 
 ```bash
@@ -42,7 +37,6 @@ chmod +x scan.sh
 ```
 
 ## Usage
-
 ### Step 1: Data Collection
 
 Run the `scan.sh` script to collect MAC address and VLAN data:
@@ -54,7 +48,6 @@ Run the `scan.sh` script to collect MAC address and VLAN data:
 Follow the prompts to enter the IP range and SNMP community string. The data will be saved in the `mac_results` directory.
 
 ### Step 2: Configure Topology
-
 Edit the `topology.yaml` file to define switch connections:
 
 ```yaml
@@ -66,7 +59,6 @@ links:
 ```
 
 ### Step 3: Run Analysis and Visualization
-
 Execute the Python script to parse data, detect VLAN leakage, and generate a visualization:
 
 ```bash
@@ -76,7 +68,6 @@ python3 VLAN_visualization.py
 The script will generate a visual graph and display it with VLAN segmentation and leakage highlights.
 
 ## Configuration Files
-
 * `topology.yaml`: Defines the physical connections between switches.
 * `mac_results/`: Contains `.txt` files with MAC address and VLAN data for each switch.
 
@@ -103,12 +94,3 @@ The graph visualized includes:
 
 * If `snmpwalk` fails, verify SNMP community strings and switch configurations.
 * For Python errors, ensure required libraries are installed correctly.
-
-## Contributors
-
-* Mikhail Dudzin
-
----
-
-Vytautas Magnus University - Faculty of Informatics
-
