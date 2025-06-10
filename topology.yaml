@@ -2,7 +2,11 @@
 
 topology:
   name: Test Topology
-  description: A simple network topology with two switches connected
+  description: A simple network topology with two switches connected .
+
+switches:
+  - name: SW1
+  - name: SW2
 
 links:
   - source: SW1
